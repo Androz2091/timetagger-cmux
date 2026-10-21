@@ -1,0 +1,29 @@
+README.md
+  s_4ede5b4fe61e03::t_f6b595cc327d2f 1-15
+main.go
+  s_4ede5b4fe61e03::t_d5ddeafa7a591c 1-146
+timetagger.go
+  s_4ede5b4fe61e03::t_f5e2b59f3ac892 1-78
+cmux.go
+  s_4ede5b4fe61e03::t_ce2ff0deddc592 1-115
+.gitignore
+  s_4ede5b4fe61e03::t_27d3a9e526fcba 1
+go.mod
+  s_4ede5b4fe61e03::t_d3426c51040b2d 1-3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4fa435c2e3510086776b98e97f21d5b8dd72b233",
+  "prompts": {},
+  "sessions": {
+    "s_4ede5b4fe61e03": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb92dfe2-37fc-4293-a6ed-fd8d10623e8c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "androz2091 <androz2091@gmail.com>"
+    }
+  }
+}

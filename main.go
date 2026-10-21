@@ -16,7 +16,7 @@ import (
 
 func main() {
 	idle := flag.Duration("idle", 5*time.Minute, "stop counting after this long without keyboard or mouse input")
-	interval := flag.Duration("interval", 30*time.Second, "how often to check for idle time and update the running record")
+	interval := flag.Duration("interval", 10*time.Second, "how often to check for idle time and update the running record")
 	minimum := flag.Duration("min", 10*time.Second, "drop records shorter than this")
 	flag.Parse()
 
@@ -91,11 +91,13 @@ func (t *tracker) update(now time.Time) {
 	if workspace != "" && t.current == nil {
 		r := newRecord(now, description(workspace))
 		t.current, t.sent, t.workspace = &r, false, workspace
-		log.Printf("start %q", r.DS)
 	}
 	if t.current != nil {
 		t.current.T2 = now.Unix()
 		if t.current.T2-t.current.T1 >= t.minimum {
+			if !t.sent {
+				log.Printf("start %q", t.current.DS)
+			}
 			t.unsent[t.current.Key], t.sent = *t.current, true
 		}
 	}

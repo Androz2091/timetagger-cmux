@@ -1,0 +1,24 @@
+cmux.go
+  s_4ede5b4fe61e03::t_eb0165ff2fac23 12
+  s_4ede5b4fe61e03::t_0d3b3770e3e859 47-49,51-54,65-71,73-92,94
+  s_4ede5b4fe61e03::t_fd1373b45fb629 41-46,50,63,93,95-109,112,115-127,136,140-143,145
+main.go
+  s_4ede5b4fe61e03::t_9b422819d6d655 35-36,43-44
+  s_4ede5b4fe61e03::t_d4b5835779c659 61,69-87,95-97,112-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "54f19f647cce89e21aae18a227ef904ea524cda8",
+  "prompts": {},
+  "sessions": {
+    "s_4ede5b4fe61e03": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb92dfe2-37fc-4293-a6ed-fd8d10623e8c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "androz2091 <androz2091@gmail.com>"
+    }
+  }
+}

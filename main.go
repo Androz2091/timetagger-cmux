@@ -32,16 +32,16 @@ func main() {
 		maxGap:  3 * *interval,
 		unsent:  map[string]record{},
 	}
-	changed := make(chan struct{}, 1)
-	go watchFocus(changed)
+	events := make(chan cmuxEvent, 64)
+	go watchFocus(events)
 	ticker := time.NewTicker(*interval)
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 
-	t.update(time.Now())
 	for {
 		select {
-		case <-changed:
+		case ev := <-events:
+			t.apply(ev)
 			t.update(time.Now())
 		case <-ticker.C:
 			t.update(time.Now())
@@ -58,11 +58,31 @@ type tracker struct {
 	idle      time.Duration
 	minimum   int64
 	maxGap    time.Duration
+	focus     focus
 	current   *record
 	sent      bool
 	workspace string
 	lastCheck time.Time
 	unsent    map[string]record
+}
+
+func (t *tracker) apply(ev cmuxEvent) {
+	switch ev.Name {
+	case connected:
+		f, err := currentFocus()
+		if err != nil {
+			log.Print(err)
+		}
+		t.focus = f
+	case "window.keyed":
+		t.focus = focus{key: true, windowID: ev.Payload.WindowID, workspaceID: ev.Payload.WorkspaceID}
+	case "window.unkeyed":
+		if ev.Payload.WindowID == t.focus.windowID {
+			t.focus.key = false
+		}
+	case "workspace.selected":
+		t.focus.workspaceID = ev.Payload.WorkspaceID
+	}
 }
 
 func (t *tracker) update(now time.Time) {
@@ -72,9 +92,9 @@ func (t *tracker) update(now time.Time) {
 	}
 	t.lastCheck = now
 
-	workspace, err := focusedWorkspace()
-	if err != nil {
-		log.Print(err)
+	workspace := ""
+	if t.focus.key {
+		workspace = t.focus.workspaceID
 	}
 	idle, err := idleTime()
 	if err != nil {
@@ -89,8 +109,12 @@ func (t *tracker) update(now time.Time) {
 		t.stop(now)
 	}
 	if workspace != "" && t.current == nil {
-		r := newRecord(now, description(workspace))
-		t.current, t.sent, t.workspace = &r, false, workspace
+		if title, err := workspaceTitle(t.focus); err != nil {
+			log.Print(err)
+		} else {
+			r := newRecord(now, description(title))
+			t.current, t.sent, t.workspace = &r, false, workspace
+		}
 	}
 	if t.current != nil {
 		t.current.T2 = now.Unix()

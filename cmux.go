@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -37,9 +38,20 @@ func rpc(method string, params map[string]string, out any) error {
 	return json.Unmarshal(b, out)
 }
 
-// focusedWorkspace returns the title of the selected workspace in cmux's key
-// window, or "" when no cmux window has keyboard focus.
-func focusedWorkspace() (string, error) {
+type focus struct {
+	key         bool
+	windowID    string
+	workspaceID string
+}
+
+// currentFocus is read when the event stream (re)connects. It asks macOS
+// whether cmux is in front, since window.list can still report the previous
+// focus for over a second after a window.keyed or window.unkeyed event.
+func currentFocus() (focus, error) {
+	front, err := frontmostBundleID()
+	if err != nil || front != cmuxBundleID {
+		return focus{}, err
+	}
 	var windows struct {
 		Windows []struct {
 			ID                  string `json:"id"`
@@ -48,33 +60,71 @@ func focusedWorkspace() (string, error) {
 		} `json:"windows"`
 	}
 	if err := rpc("window.list", nil, &windows); err != nil {
-		return "", err
+		return focus{}, err
 	}
-	for _, w := range windows.Windows {
-		if !w.Key {
-			continue
-		}
-		var list struct {
-			Workspaces []struct {
-				ID    string `json:"id"`
-				Title string `json:"title"`
-			} `json:"workspaces"`
-		}
-		if err := rpc("workspace.list", map[string]string{"window_id": w.ID}, &list); err != nil {
-			return "", err
-		}
-		for _, ws := range list.Workspaces {
-			if ws.ID == w.SelectedWorkspaceID {
-				return ws.Title, nil
-			}
+	if len(windows.Windows) == 0 {
+		return focus{}, nil
+	}
+	w := windows.Windows[0]
+	for _, candidate := range windows.Windows {
+		if candidate.Key {
+			w = candidate
 		}
 	}
-	return "", nil
+	return focus{key: true, windowID: w.ID, workspaceID: w.SelectedWorkspaceID}, nil
 }
 
-// watchFocus signals on changed whenever cmux reports a window gaining or
-// losing focus or a workspace being selected.
-func watchFocus(changed chan<- struct{}) {
+const cmuxBundleID = "com.cmuxterm.app"
+
+var bundleIDLine = regexp.MustCompile(`bundleID="([^"]+)"`)
+
+func frontmostBundleID() (string, error) {
+	asn, err := exec.Command("lsappinfo", "front").Output()
+	if err != nil {
+		return "", err
+	}
+	out, err := exec.Command("lsappinfo", "info", "-only", "bundleid", strings.TrimSpace(string(asn))).Output()
+	if err != nil {
+		return "", err
+	}
+	m := bundleIDLine.FindSubmatch(out)
+	if m == nil {
+		return "", errors.New("no bundleID in lsappinfo output")
+	}
+	return string(m[1]), nil
+}
+
+func workspaceTitle(f focus) (string, error) {
+	var list struct {
+		Workspaces []struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"workspaces"`
+	}
+	if err := rpc("workspace.list", map[string]string{"window_id": f.windowID}, &list); err != nil {
+		return "", err
+	}
+	for _, ws := range list.Workspaces {
+		if ws.ID == f.workspaceID {
+			return ws.Title, nil
+		}
+	}
+	return "", fmt.Errorf("workspace %s not in window %s", f.workspaceID, f.windowID)
+}
+
+type cmuxEvent struct {
+	Name    string `json:"name"`
+	Payload struct {
+		IsKeyWindow bool   `json:"is_key_window"`
+		WindowID    string `json:"window_id"`
+		WorkspaceID string `json:"workspace_id"`
+	} `json:"payload"`
+}
+
+// connected is sent each time the event stream starts, before its first event.
+const connected = "connected"
+
+func watchFocus(events chan<- cmuxEvent) {
 	for {
 		cmd := exec.Command(cmuxPath(), "events", "--reconnect", "--no-ack", "--no-heartbeat",
 			"--name", "window.keyed", "--name", "window.unkeyed", "--name", "workspace.selected")
@@ -83,13 +133,16 @@ func watchFocus(changed chan<- struct{}) {
 			err = cmd.Start()
 		}
 		if err == nil {
+			events <- cmuxEvent{Name: connected}
 			scanner := bufio.NewScanner(stdout)
 			scanner.Buffer(make([]byte, 64*1024), 64*1024)
 			for scanner.Scan() {
-				select {
-				case changed <- struct{}{}:
-				default:
+				var ev cmuxEvent
+				if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+					log.Printf("cmux event: %v", err)
+					continue
 				}
+				events <- ev
 			}
 			err = cmd.Wait()
 		}

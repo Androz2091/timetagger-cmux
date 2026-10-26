@@ -18,6 +18,7 @@ func main() {
 	idle := flag.Duration("idle", 5*time.Minute, "stop counting after this long without keyboard or mouse input")
 	interval := flag.Duration("interval", 10*time.Second, "how often to check for idle time and update the running record")
 	minimum := flag.Duration("min", 10*time.Second, "drop records shorter than this")
+	panes := flag.Bool("panes", false, "keep a record per focused pane, described by the pane's title, instead of per workspace")
 	flag.Parse()
 
 	api, token := os.Getenv("TIMETAGGER_API"), os.Getenv("TIMETAGGER_TOKEN")
@@ -30,6 +31,7 @@ func main() {
 		idle:    *idle,
 		minimum: int64(minimum.Seconds()),
 		maxGap:  3 * *interval,
+		panes:   *panes,
 		unsent:  map[string]record{},
 	}
 	events := make(chan cmuxEvent, 64)
@@ -58,10 +60,11 @@ type tracker struct {
 	idle      time.Duration
 	minimum   int64
 	maxGap    time.Duration
+	panes     bool
 	focus     focus
 	current   *record
 	sent      bool
-	workspace string
+	tracking  string
 	lastCheck time.Time
 	unsent    map[string]record
 }
@@ -74,15 +77,39 @@ func (t *tracker) apply(ev cmuxEvent) {
 			log.Print(err)
 		}
 		t.focus = f
+		t.findPane()
 	case "window.keyed":
+		previous := t.focus
 		t.focus = focus{key: true, windowID: ev.Payload.WindowID, workspaceID: ev.Payload.WorkspaceID}
+		if previous.workspaceID == t.focus.workspaceID && previous.surfaceID != "" {
+			t.focus.surfaceID = previous.surfaceID
+		} else {
+			t.findPane()
+		}
 	case "window.unkeyed":
 		if ev.Payload.WindowID == t.focus.windowID {
 			t.focus.key = false
 		}
 	case "workspace.selected":
 		t.focus.workspaceID = ev.Payload.WorkspaceID
+		t.findPane()
+	case "surface.focused":
+		t.focus.workspaceID, t.focus.surfaceID = ev.WorkspaceID, ev.SurfaceID
 	}
+}
+
+// findPane asks cmux which pane has focus in the workspace, when no
+// surface.focused event says so: on connecting, and on a workspace switch.
+func (t *tracker) findPane() {
+	t.focus.surfaceID = ""
+	if !t.panes || t.focus.workspaceID == "" {
+		return
+	}
+	id, err := focusedPane(t.focus.workspaceID)
+	if err != nil {
+		log.Print(err)
+	}
+	t.focus.surfaceID = id
 }
 
 func (t *tracker) update(now time.Time) {
@@ -92,28 +119,35 @@ func (t *tracker) update(now time.Time) {
 	}
 	t.lastCheck = now
 
-	workspace := ""
+	tracking := ""
 	if t.focus.key {
-		workspace = t.focus.workspaceID
+		tracking = t.focus.workspaceID
+		if t.panes {
+			tracking += "/" + t.focus.surfaceID
+		}
 	}
 	idle, err := idleTime()
 	if err != nil {
 		log.Print(err)
-		workspace = ""
+		tracking = ""
 	}
 	if idle >= t.idle {
 		t.stop(now.Add(-idle))
-		workspace = ""
+		tracking = ""
 	}
-	if t.current != nil && workspace != t.workspace {
+	if t.current != nil && tracking != t.tracking {
 		t.stop(now)
 	}
-	if workspace != "" && t.current == nil {
-		if title, err := workspaceTitle(t.focus); err != nil {
+	if tracking != "" && t.current == nil {
+		title, err := workspaceTitle(t.focus)
+		if t.panes {
+			title, err = paneTitle(t.focus.workspaceID, t.focus.surfaceID)
+		}
+		if err != nil {
 			log.Print(err)
 		} else {
 			r := newRecord(now, description(title))
-			t.current, t.sent, t.workspace = &r, false, workspace
+			t.current, t.sent, t.tracking = &r, false, tracking
 		}
 	}
 	if t.current != nil {
@@ -133,7 +167,7 @@ func (t *tracker) stop(end time.Time) {
 		return
 	}
 	r := *t.current
-	t.current, t.workspace = nil, ""
+	t.current, t.tracking = nil, ""
 	r.T2 = end.Unix()
 	if r.T2-r.T1 < t.minimum {
 		if !t.sent {
@@ -164,9 +198,9 @@ func (t *tracker) flush() {
 // TimeTagger tags are letters, digits, "-", "_" and "/".
 var tagChars = regexp.MustCompile(`^[\p{L}\p{N}_/-]+$`)
 
-func description(workspace string) string {
-	if tagChars.MatchString(workspace) {
-		return "#cmux #" + workspace
+func description(title string) string {
+	if tagChars.MatchString(title) {
+		return "#cmux #" + title
 	}
-	return "#cmux " + workspace
+	return "#cmux " + title
 }

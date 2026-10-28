@@ -42,6 +42,7 @@ type focus struct {
 	key         bool
 	windowID    string
 	workspaceID string
+	surfaceID   string
 }
 
 // currentFocus is read when the event stream (re)connects. It asks macOS
@@ -112,9 +113,52 @@ func workspaceTitle(f focus) (string, error) {
 	return "", fmt.Errorf("workspace %s not in window %s", f.workspaceID, f.windowID)
 }
 
+type surface struct {
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Focused bool   `json:"focused"`
+}
+
+func surfaces(workspaceID string) ([]surface, error) {
+	var list struct {
+		Surfaces []surface `json:"surfaces"`
+	}
+	err := rpc("surface.list", map[string]string{"workspace_id": workspaceID}, &list)
+	return list.Surfaces, err
+}
+
+func focusedPane(workspaceID string) (string, error) {
+	list, err := surfaces(workspaceID)
+	if err != nil {
+		return "", err
+	}
+	for _, s := range list {
+		if s.Focused {
+			return s.ID, nil
+		}
+	}
+	return "", fmt.Errorf("no focused pane in workspace %s", workspaceID)
+}
+
+func paneTitle(workspaceID, surfaceID string) (string, error) {
+	list, err := surfaces(workspaceID)
+	if err != nil {
+		return "", err
+	}
+	for _, s := range list {
+		if s.ID == surfaceID {
+			return s.Title, nil
+		}
+	}
+	return "", fmt.Errorf("pane %s not in workspace %s", surfaceID, workspaceID)
+}
+
 type cmuxEvent struct {
-	Name    string `json:"name"`
-	Payload struct {
+	Name string `json:"name"`
+	// surface.focused carries these at the top level, and no workspace_id in its payload.
+	WorkspaceID string `json:"workspace_id"`
+	SurfaceID   string `json:"surface_id"`
+	Payload     struct {
 		IsKeyWindow bool   `json:"is_key_window"`
 		WindowID    string `json:"window_id"`
 		WorkspaceID string `json:"workspace_id"`
@@ -127,7 +171,8 @@ const connected = "connected"
 func watchFocus(events chan<- cmuxEvent) {
 	for {
 		cmd := exec.Command(cmuxPath(), "events", "--reconnect", "--no-ack", "--no-heartbeat",
-			"--name", "window.keyed", "--name", "window.unkeyed", "--name", "workspace.selected")
+			"--name", "window.keyed", "--name", "window.unkeyed", "--name", "workspace.selected",
+			"--name", "surface.focused")
 		stdout, err := cmd.StdoutPipe()
 		if err == nil {
 			err = cmd.Start()

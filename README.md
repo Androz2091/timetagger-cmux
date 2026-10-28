@@ -12,4 +12,4 @@ TIMETAGGER_TOKEN=<API token from your TimeTagger account page> \
 timetagger-cmux
 ```
 
-A self-hosted instance serves its API at `https://<host>/timetagger/api/v2`. `timetagger-cmux -h` lists the flags: idle timeout, update interval, minimum record length.
+A self-hosted instance serves its API at `https://<host>/timetagger/api/v2`. `timetagger-cmux -h` lists the flags: idle timeout, update interval, minimum record length, and `-panes`, which keeps a record per focused pane in a split workspace, described by the pane's title, rather than one per workspace.
